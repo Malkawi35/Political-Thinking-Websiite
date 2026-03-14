@@ -15,7 +15,7 @@ function parseAnalysis(text) {
       if (title.includes("PILLAR 1") || title.includes("Chain of Events")) { pillar = 1; icon = "📡"; }
       else if (title.includes("PILLAR 2") || title.includes("Background")) { pillar = 2; icon = "🌍"; }
       else if (title.includes("PILLAR 3") || title.includes("Circumstantial")) { pillar = 3; icon = "🔬"; }
-      else if (title.includes("PILLAR 4") || title.includes("Source Scrutiny") || title.includes("Credibility")) { pillar = 4; icon = "🔎"; }
+      else if (title.includes("PILLAR 4") || title.includes("Source")) { pillar = 4; icon = "🔎"; }
       else if (title.includes("PILLAR 5") || title.includes("Domain Linking") || title.includes("Power") || title.includes("Reality Check")) { pillar = 5; icon = "🔗"; }
       else if (title.includes("FINAL") || title.includes("ASSESSMENT")) { pillar = "final"; icon = "⚖️"; }
       else if (title.includes("PLAIN") || title.includes("SUMMARY")) { pillar = "summary"; icon = "📋"; }
@@ -32,14 +32,6 @@ function parseAnalysis(text) {
   return sections;
 }
 
-function extractCredibilityScores(text) {
-  const scores = [];
-  const regex = /\*\*(.+?)\*\*\s*[—–-]\s*(?:[Cc]redibility:?\s*)?(\d+)\/10/g;
-  let match;
-  while ((match = regex.exec(text)) !== null) scores.push({ source: match[1].trim(), score: parseInt(match[2]) });
-  return scores;
-}
-
 function extractTheaterRating(text) {
   if (text.includes("🎭") && (text.includes("POLITICAL THEATER") || text.includes("THEATER"))) return { rating: "theater", label: "POLITICAL THEATER", color: "#ffaa00", icon: "🎭" };
   if (text.includes("🔴") && text.includes("GENUINE CRISIS")) return { rating: "crisis", label: "GENUINE CRISIS", color: "#ff3366", icon: "🔴" };
@@ -50,26 +42,10 @@ function extractTheaterRating(text) {
 function extractSourcesList(text) {
   const sources = [];
   for (const line of text.split("\n")) {
-    const m = line.match(/^-\s+\*\*(.+?)\*\*\s*[—–-]\s*(.+?)(?:\s*[—–-]\s*[Cc]redibility:?\s*(\d+)\/10)?$/);
-    if (m) sources.push({ name: m[1].trim(), url: m[2].trim(), score: m[3] ? parseInt(m[3]) : null });
+    const m = line.match(/^-\s+\*\*(.+?)\*\*\s*[—–-]\s*(.+)$/);
+    if (m) sources.push({ name: m[1].trim(), detail: m[2].trim() });
   }
   return sources;
-}
-
-function CredibilityBar({ source, score }) {
-  const color = score >= 7 ? "#00ff88" : score >= 4 ? "#ffaa00" : "#ff3366";
-  const label = score >= 7 ? "HIGH" : score >= 4 ? "MEDIUM" : "LOW";
-  return (
-    <div style={{ marginBottom: 10, background: "rgba(0,255,136,0.03)", border: "1px solid rgba(0,255,136,0.08)", borderRadius: 6, padding: "10px 14px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13 }}>
-        <span style={{ color: "#c0c8d8", fontWeight: 600 }}>{source}</span>
-        <span style={{ color, fontWeight: 700, fontSize: 12, letterSpacing: 1 }}>{label} — {score}/10</span>
-      </div>
-      <div style={{ height: 6, background: "rgba(255,255,255,0.06)", borderRadius: 3, overflow: "hidden" }}>
-        <div style={{ width: `${score * 10}%`, height: "100%", background: `linear-gradient(90deg, ${color}88, ${color})`, borderRadius: 3, transition: "width 1s ease" }} />
-      </div>
-    </div>
-  );
 }
 
 function TheaterBadge({ rating }) {
@@ -89,12 +65,11 @@ function SourcesListSection({ content }) {
     <div style={{ marginTop: 4 }}>
       <div style={{ fontSize: 11, color: "#667788", letterSpacing: 1.5, fontWeight: 600, marginBottom: 12, fontFamily: "'JetBrains Mono', monospace" }}>{sources.length} SOURCES REFERENCED</div>
       {sources.map((s, i) => (
-        <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", marginBottom: 4, background: "rgba(0,212,255,0.03)", borderRadius: 4, borderLeft: `2px solid ${s.score ? (s.score >= 7 ? "#00ff88" : s.score >= 4 ? "#ffaa00" : "#ff3366") : "#334455"}` }}>
+        <div key={i} style={{ display: "flex", alignItems: "center", padding: "8px 12px", marginBottom: 4, background: "rgba(0,212,255,0.03)", borderRadius: 4, borderLeft: "2px solid #334455" }}>
           <div style={{ flex: 1 }}>
             <span style={{ color: "#d0d8e8", fontWeight: 600, fontSize: 13 }}>{s.name}</span>
-            <span style={{ color: "#556677", fontSize: 12, marginLeft: 8 }}>{s.url}</span>
+            <span style={{ color: "#556677", fontSize: 12, marginLeft: 8 }}>{s.detail}</span>
           </div>
-          {s.score && <span style={{ fontSize: 11, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: s.score >= 7 ? "#00ff88" : s.score >= 4 ? "#ffaa00" : "#ff3366" }}>{s.score}/10</span>}
         </div>
       ))}
     </div>
@@ -105,7 +80,6 @@ function PillarSection({ section, index }) {
   const [open, setOpen] = useState(true);
   const pillarColors = { 1: "#00d4ff", 2: "#00ff88", 3: "#ff6b00", 4: "#ff3366", 5: "#aa55ff", final: "#ffd700", header: "#ffffff", summary: "#00d4ff", sources: "#667788" };
   const color = pillarColors[section.pillar] || "#8899aa";
-  const scores = section.pillar === 4 ? extractCredibilityScores(section.content) : [];
   const theaterRating = section.pillar === 5 ? extractTheaterRating(section.content) : null;
   const isSummary = section.pillar === "summary";
   const isSources = section.pillar === "sources";
@@ -139,7 +113,6 @@ function PillarSection({ section, index }) {
       {open && (
         <div style={{ padding: "4px 18px 18px" }}>
           {theaterRating && <TheaterBadge rating={theaterRating} />}
-          {scores.length > 0 && <div style={{ marginBottom: 16, padding: "12px 0" }}><div style={{ fontSize: 11, color: "#667788", letterSpacing: 1.5, fontWeight: 600, marginBottom: 10, fontFamily: "'JetBrains Mono', monospace" }}>SOURCE CREDIBILITY MATRIX</div>{scores.map((s, i) => <CredibilityBar key={i} source={s.source} score={s.score} />)}</div>}
           {isSources ? <SourcesListSection content={section.content} /> : renderContent(section.content)}
         </div>
       )}
@@ -194,18 +167,26 @@ export default function Home() {
   const [view, setView] = useState("analyze");
   const [error, setError] = useState(null);
   const [statusMsg, setStatusMsg] = useState("");
+  const [cooldown, setCooldown] = useState(0);
   const resultRef = useRef(null);
 
   useEffect(() => {
     try { const saved = localStorage.getItem("political_analyses"); if (saved) setAnalyses(JSON.parse(saved)); } catch(e){}
   }, []);
 
+  // Cooldown timer
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setInterval(() => setCooldown(c => Math.max(0, c - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [cooldown]);
+
   const saveAnalyses = (updated) => { setAnalyses(updated); try { localStorage.setItem("political_analyses", JSON.stringify(updated)); } catch(e){} };
 
   const runAnalysis = async () => {
-    if (!question.trim()) return;
+    if (!question.trim() || cooldown > 0) return;
     setLoading(true); setError(null); setCurrentResult(null);
-    const msgs = mode === "auto" ? ["Searching for news sources...", "Gathering intelligence from multiple sources...", "Cross-referencing narratives...", "Detecting theater vs. reality...", "Structuring 5-pillar analysis..."] : ["Analyzing provided sources...", "Processing through 5-pillar methodology...", "Evaluating source credibility...", "Running theater detection..."];
+    const msgs = mode === "auto" ? ["Searching for news sources...", "Gathering intelligence from multiple sources...", "Cross-referencing narratives...", "Detecting theater vs. reality...", "Structuring 5-pillar analysis..."] : ["Analyzing provided sources...", "Processing through 5-pillar methodology...", "Running theater detection..."];
     let mi = 0; setStatusMsg(msgs[0]);
     const si = setInterval(() => { mi = Math.min(mi + 1, msgs.length - 1); setStatusMsg(msgs[mi]); }, 12000);
     try {
@@ -221,6 +202,8 @@ export default function Home() {
       setCurrentResult(entry);
       const updated = [entry, ...analyses];
       saveAnalyses(updated);
+      // Start 30-second cooldown after successful analysis
+      setCooldown(30);
       setTimeout(() => { resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 300);
     } catch (err) { setError(err.message || "Analysis failed."); } finally { clearInterval(si); setStatusMsg(""); setLoading(false); }
   };
@@ -270,12 +253,12 @@ export default function Home() {
           {mode === "manual" && (
             <div style={{ background: "linear-gradient(135deg, #0a0e1c, #0f1525)", border: "1px solid rgba(170,85,255,0.1)", borderRadius: 12, padding: 20, marginBottom: 16, animation: "fadeSlideIn 0.3s ease" }}>
               <label style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#aa55ff88", letterSpacing: 2, fontWeight: 600, display: "block", marginBottom: 10 }}>PASTE ARTICLES / NEWS SOURCES</label>
-              <textarea value={manualArticles} onChange={e => setManualArticles(e.target.value)} placeholder={"Paste article text, URLs, or excerpts here...\n\nInclude the source name for better credibility analysis."} rows={8} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8, padding: "14px 16px", color: "#d0d8e8", fontSize: 14, fontFamily: "'Segoe UI', sans-serif", resize: "vertical", lineHeight: 1.6, boxSizing: "border-box" }} />
+              <textarea value={manualArticles} onChange={e => setManualArticles(e.target.value)} placeholder={"Paste article text, URLs, or excerpts here...\n\nInclude the source name for better analysis."} rows={8} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8, padding: "14px 16px", color: "#d0d8e8", fontSize: 14, fontFamily: "'Segoe UI', sans-serif", resize: "vertical", lineHeight: 1.6, boxSizing: "border-box" }} />
             </div>
           )}
 
-          <button onClick={runAnalysis} disabled={loading || !question.trim() || (mode === "manual" && !manualArticles.trim())} style={{ width: "100%", padding: "16px", borderRadius: 10, border: loading ? "1px solid rgba(0,212,255,0.1)" : "1px solid rgba(0,212,255,0.2)", background: loading ? "rgba(0,212,255,0.06)" : "linear-gradient(135deg, rgba(0,212,255,0.15), rgba(170,85,255,0.1))", color: loading ? "#557" : "#00d4ff", fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700, letterSpacing: 2, cursor: loading ? "wait" : "pointer", transition: "all 0.3s", marginBottom: 32, opacity: (!question.trim() || (mode === "manual" && !manualArticles.trim())) ? 0.4 : 1 }}>
-            {loading ? <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}><span className="pulse-anim">◉</span>{statusMsg || "ANALYZING..."}</span> : "▶ RUN ANALYSIS"}
+          <button onClick={runAnalysis} disabled={loading || !question.trim() || (mode === "manual" && !manualArticles.trim()) || cooldown > 0} style={{ width: "100%", padding: "16px", borderRadius: 10, border: loading ? "1px solid rgba(0,212,255,0.1)" : "1px solid rgba(0,212,255,0.2)", background: loading ? "rgba(0,212,255,0.06)" : cooldown > 0 ? "rgba(255,255,255,0.03)" : "linear-gradient(135deg, rgba(0,212,255,0.15), rgba(170,85,255,0.1))", color: loading ? "#557" : cooldown > 0 ? "#445566" : "#00d4ff", fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700, letterSpacing: 2, cursor: loading || cooldown > 0 ? "wait" : "pointer", transition: "all 0.3s", marginBottom: 32, opacity: (!question.trim() || (mode === "manual" && !manualArticles.trim())) ? 0.4 : 1 }}>
+            {loading ? <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}><span className="pulse-anim">◉</span>{statusMsg || "ANALYZING..."}</span> : cooldown > 0 ? `COOLDOWN — ${cooldown}s` : "▶ RUN ANALYSIS"}
           </button>
 
           {error && <div style={{ background: "rgba(255,51,102,0.08)", border: "1px solid rgba(255,51,102,0.2)", borderRadius: 10, padding: "16px 20px", marginBottom: 24, color: "#ff6688", fontSize: 14 }}><strong>Analysis Error:</strong> {error}</div>}
