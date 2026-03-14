@@ -1,5 +1,7 @@
 const SYSTEM_PROMPT = `You are a Political Analysis Engine applying a strict 5-pillar methodology. Structure EVERY analysis using ALL 5 pillars. Never skip a pillar.
 
+LANGUAGE RULE (MANDATORY): You MUST detect the language of the user's question and respond ENTIRELY in that same language. If the user writes in Arabic, respond fully in Arabic. If in English, respond in English. If in French, respond in French. This applies to ALL sections including headers, analysis, and summary. The section header emojis (📡🌍🔬🔎🔗⚖️📋📰) must remain the same regardless of language, but translate the header text. For example in Arabic: "## 📡 الركيزة 1: سلسلة الأحداث" instead of "## 📡 PILLAR 1: Chain of Events".
+
 CORE RULES:
 - NEVER take political statements at face value — assume hidden purposes.
 - Always ask: "Is this real confrontation or choreographed theater?"
@@ -27,7 +29,7 @@ Link to proper domain. Identify major powers and interests. Who benefits? Who lo
 **THEATER vs. REALITY CHECK (MANDATORY):**
 For each major actor: What are they SAYING vs DOING? Do words match actions? Does the appearance of conflict benefit both sides? Rate: 🎭 POLITICAL THEATER | ⚠️ MIXED | 🔴 GENUINE CRISIS
 
-## OUTPUT FORMAT (use these exact headers):
+## OUTPUT FORMAT (use these exact headers, translated to the user's language):
 
 # [Event/Question Title]
 
@@ -64,7 +66,6 @@ async function fetchWithRetry(url, options, maxRetries = 2) {
     const response = await fetch(url, options);
     
     if (response.status === 429 && attempt < maxRetries) {
-      // Rate limited — wait and retry
       const retryAfter = response.headers.get("retry-after");
       const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : (attempt + 1) * 15000;
       await new Promise(resolve => setTimeout(resolve, waitMs));
@@ -90,7 +91,7 @@ export async function POST(request) {
 
     let userPrompt;
     if (mode === "manual") {
-      userPrompt = `Analyze this political event using the 5-pillar methodology.
+      userPrompt = `Analyze this political event using the 5-pillar methodology. IMPORTANT: Respond in the SAME language as the question below.
 
 **Event:** ${question}
 
@@ -99,7 +100,7 @@ ${articles}
 
 Apply ALL 5 pillars. Be ruthless in detecting political theater vs genuine developments.`;
     } else {
-      userPrompt = `Search for latest news about this political event, gather multiple sources (4-6), then apply the full 5-pillar analysis.
+      userPrompt = `Search for latest news about this political event, gather multiple sources (4-6), then apply the full 5-pillar analysis. IMPORTANT: Respond in the SAME language as the question below.
 
 **Event:** ${question}
 
@@ -130,10 +131,9 @@ Find multiple perspectives, then deliver the complete 5-pillar analysis. Pay att
     const data = await response.json();
 
     if (data.error) {
-      // Give user-friendly message for rate limits
       if (data.error.message?.includes("rate limit")) {
         return Response.json({ 
-          error: "The analysis engine is busy. Please wait 30 seconds and try again." 
+          error: "The analysis engine is busy. Please wait 30 seconds and try again. / محرك التحليل مشغول. يرجى الانتظار 30 ثانية والمحاولة مرة أخرى." 
         }, { status: 429 });
       }
       return Response.json({ error: data.error.message }, { status: 500 });
