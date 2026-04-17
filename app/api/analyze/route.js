@@ -1,3 +1,6 @@
+export const runtime = 'edge';
+export const maxDuration = 120;
+
 const SYSTEM_PROMPT = `You are a Political Analysis Engine applying a strict 5-pillar methodology. Structure EVERY analysis using ALL 5 pillars. Never skip a pillar.
 
 LANGUAGE RULE (MANDATORY): You MUST detect the language of the user's question and respond ENTIRELY in that same language. If the user writes in Arabic, respond fully in Arabic. If in English, respond in English. If in French, respond in French. This applies to ALL sections including headers, analysis, and summary. The section header emojis (📡🌍🔬🔎🔗⚖️📋📰) must remain the same regardless of language, but translate the header text. For example in Arabic: "## 📡 الركيزة 1: سلسلة الأحداث" instead of "## 📡 PILLAR 1: Chain of Events".
@@ -60,92 +63,215 @@ For each major actor: What are they SAYING vs DOING? Do words match actions? Doe
 
 Be ruthlessly analytical. Find the real story behind the surface story.`;
 
-// Retry helper for rate limit errors
-async function fetchWithRetry(url, options, maxRetries = 2) {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const response = await fetch(url, options);
-    
-    if (response.status === 429 && attempt < maxRetries) {
-      const retryAfter = response.headers.get("retry-after");
-      const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : (attempt + 1) * 15000;
-      await new Promise(resolve => setTimeout(resolve, waitMs));
-      continue;
-    }
-    
-    return response;
+// Input limits to prevent abuse
+const MAX_QUESTION_LENGTH = 2000;
+const MAX_ARTICLES_LENGTH = 50000;
+
+// Model selection: Opus 4.7 = deepest analysis, Sonnet 4.6 = faster/cheaper fallback
+const MODEL_OPUS = 'claude-opus-4-7';
+const MODEL_SONNET = 'claude-sonnet-4-6';
+
+function errorResponse(message, status = 500) {
+  return new Response(JSON.stringify({ error: message }), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function validateInput({ question, mode, articles }) {
+  if (!question || typeof question !== 'string' || !question.trim()) {
+    return 'Question is required';
   }
+  if (question.length > MAX_QUESTION_LENGTH) {
+    return `Question too long (max ${MAX_QUESTION_LENGTH} chars)`;
+  }
+  if (mode === 'manual') {
+    if (!articles || !articles.trim()) {
+      return 'Manual mode requires pasted articles';
+    }
+    if (articles.length > MAX_ARTICLES_LENGTH) {
+      return `Articles too long (max ${MAX_ARTICLES_LENGTH} chars)`;
+    }
+  }
+  if (mode !== 'auto' && mode !== 'manual') {
+    return 'Invalid mode';
+  }
+  return null;
 }
 
 export async function POST(request) {
+  let body;
   try {
-    const { question, mode, articles } = await request.json();
+    body = await request.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
 
-    if (!question) {
-      return Response.json({ error: "Question is required" }, { status: 400 });
-    }
+  const { question, mode = 'auto', articles = '', depth = 'standard' } = body;
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      return Response.json({ error: "API key not configured" }, { status: 500 });
-    }
+  const validationError = validateInput({ question, mode, articles });
+  if (validationError) return errorResponse(validationError, 400);
 
-    let userPrompt;
-    if (mode === "manual") {
-      userPrompt = `Analyze this political event using the 5-pillar methodology. IMPORTANT: Respond in the SAME language as the question below.
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return errorResponse('API key not configured', 500);
 
-**Event:** ${question}
+  const userPrompt = mode === 'manual'
+    ? `Analyze this political event using the 5-pillar methodology. IMPORTANT: Respond in the SAME language as the question below.
+
+**Event:** ${question.trim()}
 
 **User-provided sources:**
-${articles}
+${articles.trim()}
 
-Apply ALL 5 pillars. Be ruthless in detecting political theater vs genuine developments.`;
-    } else {
-      userPrompt = `Search for latest news about this political event, gather multiple sources (4-6), then apply the full 5-pillar analysis. IMPORTANT: Respond in the SAME language as the question below.
+Apply ALL 5 pillars. Be ruthless in detecting political theater vs genuine developments.`
+    : `Search for latest news about this political event, gather multiple sources (4-6), then apply the full 5-pillar analysis. IMPORTANT: Respond in the SAME language as the question below.
 
-**Event:** ${question}
+**Event:** ${question.trim()}
 
 Find multiple perspectives, then deliver the complete 5-pillar analysis. Pay attention to contradictions between what actors SAY and DO.`;
-    }
 
-    const body = {
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 8000,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userPrompt }],
-    };
+  // Depth lets subscribers opt into Opus for deep dives (Sonnet default keeps costs sane)
+  const model = depth === 'deep' ? MODEL_OPUS : MODEL_SONNET;
 
-    if (mode === "auto") {
-      body.tools = [{ type: "web_search_20250305", name: "web_search" }];
-    }
+  const anthropicBody = {
+    model,
+    max_tokens: 8000,
+    stream: true,
+    system: SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: userPrompt }],
+  };
 
-    const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify(body),
-    });
-
-    const data = await response.json();
-
-    if (data.error) {
-      if (data.error.message?.includes("rate limit")) {
-        return Response.json({ 
-          error: "The analysis engine is busy. Please wait 30 seconds and try again. / محرك التحليل مشغول. يرجى الانتظار 30 ثانية والمحاولة مرة أخرى." 
-        }, { status: 429 });
-      }
-      return Response.json({ error: data.error.message }, { status: 500 });
-    }
-
-    const textContent = data.content
-      ?.filter((block) => block.type === "text")
-      .map((block) => block.text)
-      .join("\n\n");
-
-    return Response.json({ result: textContent });
-  } catch (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+  if (mode === 'auto') {
+    anthropicBody.tools = [{ type: 'web_search_20250305', name: 'web_search' }];
   }
+
+  let anthropicResponse;
+  try {
+    anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(anthropicBody),
+      signal: request.signal,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') return errorResponse('Request aborted', 499);
+    return errorResponse(`Upstream error: ${err.message}`, 502);
+  }
+
+  if (!anthropicResponse.ok) {
+    let errorText = 'Analysis engine error';
+    try {
+      const errBody = await anthropicResponse.json();
+      errorText = errBody.error?.message || errorText;
+    } catch { /* ignore */ }
+
+    if (anthropicResponse.status === 429) {
+      return errorResponse(
+        'The analysis engine is rate-limited. Please wait 30 seconds and try again. / محرك التحليل مشغول. يرجى الانتظار 30 ثانية.',
+        429
+      );
+    }
+    if (anthropicResponse.status === 529) {
+      return errorResponse('The analysis engine is temporarily overloaded. Try again shortly.', 529);
+    }
+    return errorResponse(errorText, anthropicResponse.status);
+  }
+
+  // Stream: parse Anthropic SSE, forward only text deltas as NDJSON to the client.
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const reader = anthropicResponse.body.getReader();
+      let buffer = '';
+      let currentBlockType = null;
+      let usage = null;
+
+      const send = (obj) => {
+        controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'));
+      };
+
+      // Heartbeat so reverse proxies don't time out during long web searches
+      const heartbeat = setInterval(() => send({ heartbeat: true }), 15000);
+
+      try {
+        // Signal model + mode so the client can display it
+        send({ meta: { model, mode, depth } });
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+
+          for (const rawEvent of events) {
+            const dataLine = rawEvent.split('\n').find((l) => l.startsWith('data: '));
+            if (!dataLine) continue;
+            const payload = dataLine.slice(6);
+            if (payload === '[DONE]') continue;
+
+            let evt;
+            try { evt = JSON.parse(payload); } catch { continue; }
+
+            switch (evt.type) {
+              case 'content_block_start':
+                currentBlockType = evt.content_block?.type || null;
+                // Let client show "searching the web..." when tool use starts
+                if (currentBlockType === 'server_tool_use' || currentBlockType === 'tool_use') {
+                  send({ status: 'searching' });
+                }
+                break;
+
+              case 'content_block_delta':
+                if (currentBlockType === 'text' && evt.delta?.type === 'text_delta') {
+                  send({ text: evt.delta.text });
+                }
+                break;
+
+              case 'content_block_stop':
+                currentBlockType = null;
+                break;
+
+              case 'message_delta':
+                if (evt.usage) usage = evt.usage;
+                break;
+
+              case 'message_stop':
+                send({ done: true, usage });
+                break;
+
+              case 'error':
+                send({ error: evt.error?.message || 'Stream error' });
+                break;
+            }
+          }
+        }
+      } catch (err) {
+        send({ error: err.message || 'Stream aborted' });
+      } finally {
+        clearInterval(heartbeat);
+        controller.close();
+      }
+    },
+    cancel() {
+      // Propagate client cancel upstream
+      anthropicResponse.body?.cancel?.();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
 }
